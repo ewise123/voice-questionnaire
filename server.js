@@ -109,7 +109,7 @@ USER'S SPOKEN RESPONSE: "${transcript}"
 
 ${typeInstructions}
 
-If the response is INVALID, include a brief explanation (one sentence, under 15 words) of why it doesn't match what was asked. Do not echo back what the user said. Do not repeat the question.
+If the response is INVALID, include a brief explanation (one sentence, under 15 words) directed at the user (use "you"/"your") and asking for a valid response. Do not echo back what the user said. Do not repeat the question.
 
 RESPOND WITH ONLY THIS JSON (no markdown, no explanation, just the JSON):
 {"valid": true, "normalized": "THE_NORMALIZED_VALUE"}
@@ -326,7 +326,7 @@ function fallbackValidation(questionType, transcript, choices) {
     for (const p of noPatterns) {
       if (normalized.includes(p)) return { valid: true, normalized: 'NO', explanation: null };
     }
-    return { valid: false, normalized: null, explanation: 'I need a clear yes or no answer.' };
+    return { valid: false, normalized: null, explanation: 'Please answer with a clear yes or no.' };
   }
   
   if (questionType === 'choice' && choices) {
@@ -343,11 +343,11 @@ function fallbackValidation(questionType, transcript, choices) {
     return { valid: true, normalized: transcript.trim(), explanation: null };
   }
   
-  let explanation = 'I did not understand that.';
+  let explanation = 'Please provide a valid response.';
   if (questionType === 'date') {
-    explanation = 'I need a date.';
+    explanation = 'Please provide a date.';
   } else if (questionType === 'number') {
-    explanation = 'I need a number.';
+    explanation = 'Please provide a number.';
   }
   return { valid: false, normalized: null, explanation };
 }

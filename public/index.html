@@ -683,16 +683,16 @@
       getGenericExplanation(questionType) {
         switch (questionType) {
           case 'yes_no':
-            return 'I need a clear yes or no answer.';
+            return 'Please answer with a clear yes or no.';
           case 'date':
-            return 'I need a date.';
+            return 'Please provide a date.';
           case 'number':
-            return 'I need a number.';
+            return 'Please provide a number.';
           case 'choice':
             return 'Please choose one of the options.';
           case 'open':
           default:
-            return "I didn't understand that.";
+            return 'Please provide a valid response.';
         }
       }
 
