@@ -824,14 +824,16 @@
         ` : ''}
 
         <!-- Main -->
-        <main class="max-w-4xl mx-auto px-6 py-12">
-          ${state.status === 'idle' ? renderIdle(state) : ''}
-          ${['speaking', 'listening', 'validating'].includes(state.status) ? renderActive(state, question) : ''}
-          ${state.status === 'complete' ? renderComplete(state) : ''}
+        <main class="max-w-6xl mx-auto px-6 py-12">
+          <div class="flex gap-8">
+            <div class="flex-1">
+              ${state.status === 'idle' ? renderIdle(state) : ''}
+              ${['speaking', 'listening', 'validating'].includes(state.status) ? renderActive(state, question) : ''}
+              ${state.status === 'complete' ? renderComplete(state) : ''}
+            </div>
+            ${['idle', 'complete'].includes(state.status) ? '' : renderChatFeed(state)}
+          </div>
         </main>
-
-        <!-- Transcript Panel -->
-        ${state.transcript.length > 0 ? renderTranscript(state) : ''}
       `;
 
       // Event handlers
@@ -841,6 +843,11 @@
         controller.state = { ...controller.state, status: 'idle' };
         render(controller.state);
       });
+
+      const chatScroll = document.getElementById('chatScroll');
+      if (chatScroll) {
+        chatScroll.scrollTop = chatScroll.scrollHeight;
+      }
     }
 
     function renderIdle(state) {
@@ -1031,6 +1038,63 @@
             </div>
           </details>
         </div>
+      `;
+    }
+
+    function renderChatFeed(state) {
+      const bubbleHtml = state.transcript.map(entry => {
+        const isUser = entry.role === 'user';
+        const bubbleClass = isUser
+          ? 'bg-blue-500 text-white rounded-2xl rounded-br-sm'
+          : 'bg-slate-700 text-slate-100 rounded-2xl rounded-bl-sm';
+        const alignClass = isUser ? 'justify-end' : 'justify-start';
+
+        return `
+          <div class="flex ${alignClass}">
+            <div class="max-w-[220px] px-4 py-2 text-sm leading-relaxed ${bubbleClass}">
+              ${entry.text}
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      const showUserTyping = state.status === 'listening' && state.transcript.length > 0;
+      const showSystemTyping = ['speaking', 'validating'].includes(state.status) && state.transcript.length > 0;
+
+      const typingDots = (alignRight) => `
+        <div class="flex ${alignRight ? 'justify-end' : 'justify-start'}">
+          <div class="flex items-center gap-1 px-4 py-2 rounded-2xl ${alignRight ? 'bg-blue-500' : 'bg-slate-700'}">
+            <span class="w-1.5 h-1.5 rounded-full bg-white/80 animate-bounce [animation-delay:-0.2s]"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-white/80 animate-bounce [animation-delay:-0.1s]"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-white/80 animate-bounce"></span>
+          </div>
+        </div>
+      `;
+
+      return `
+        <aside class="w-80 shrink-0">
+          <div class="bg-slate-900/80 border border-slate-700/60 rounded-3xl p-4 shadow-xl h-[520px] flex flex-col">
+            <div class="flex items-center gap-3 pb-4 border-b border-slate-700/60">
+              <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center">
+                <span class="text-sm font-semibold">AI</span>
+              </div>
+              <div>
+                <div class="text-sm font-semibold">Underwriting Assistant</div>
+                <div class="text-xs text-slate-400">Live demo transcript</div>
+              </div>
+            </div>
+            <div id="chatScroll" class="flex-1 overflow-y-auto space-y-3 py-4 pr-1">
+              ${bubbleHtml || '<div class="text-slate-500 text-sm">Conversation will appear here.</div>'}
+              ${showUserTyping ? typingDots(true) : ''}
+              ${showSystemTyping ? typingDots(false) : ''}
+            </div>
+            <div class="pt-3 border-t border-slate-700/60">
+              <div class="bg-slate-800/80 rounded-xl px-4 py-3 text-slate-500 text-xs">
+                Voice mode enabled
+              </div>
+            </div>
+          </div>
+        </aside>
       `;
     }
 
