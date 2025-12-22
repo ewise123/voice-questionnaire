@@ -120,7 +120,9 @@ voice-questionnaire/
 1. **Security**: API keys stay on the server, never exposed to browser
 2. **Determinism**: Questions are in a static array - no AI can skip them
 3. **AI Validation**: The LLM only validates answers, can't change flow
-4. **Fallback**: Works without API keys using Web Speech + rule-based validation
+4. **User Feedback**: Invalid answers can include a concise explanation before re-asking
+5. **Repeat Requests**: "Repeat that" style requests re-play the current question
+6. **Fallback**: Works without API keys using Web Speech + rule-based validation
 
 ---
 
@@ -171,6 +173,24 @@ Response:
 }
 ```
 
+Invalid response example:
+```json
+{
+  "valid": false,
+  "normalized": null,
+  "explanation": "Please answer with a clear yes or no."
+}
+```
+
+Repeat request example:
+```json
+{
+  "valid": false,
+  "normalized": null,
+  "repeat": true
+}
+```
+
 ---
 
 ## Customizing Questions
@@ -215,6 +235,10 @@ const QUESTIONS = [
 - Check that ANTHROPIC_API_KEY or OPENAI_API_KEY is set
 - Check server console for API errors
 - Falls back to rule-based validation if APIs fail
+
+### "It keeps repeating the question"
+- The app treats phrases like "repeat that" or "say it again" as repeat requests
+- Repeat requests do not consume retry attempts
 
 ### "CORS errors"
 - Make sure you're accessing http://localhost:3000, not the HTML file directly
