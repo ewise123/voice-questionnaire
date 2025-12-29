@@ -67,6 +67,26 @@
     // ============================================================================
     
     const QUESTIONS = [
+      // === Customer Identification ===
+      {
+        id: 'cust_id_first_name',
+        section: 'Welcome',
+        question: 'Can I have your first name?',
+        type: 'open',
+      },
+      {
+        id: 'cust_id_last_name',
+        section: 'Welcome',
+        question: 'Can I have your last name?',
+        type: 'open',
+      },
+      {
+        id: 'cust_id_gender',
+        section: 'Welcome',
+        question: 'Can I have your your physical gender?',
+        type: 'open',
+      },
+
       // === PRIMARY MEDICAL PROVIDER ===
       {
         id: 'pmv.has_primary_provider',
@@ -367,15 +387,11 @@
       },
     ];
 
-    const INTRO_MESSAGE = 
-      "Hello, and thank you for starting your insurance application. " +
-      "I will now ask you a series of medical history questions. " +
-      "Please answer each question clearly. " +
-      "For yes or no questions, please respond with yes or no. " +
-      "Let's begin.";
+    const INTRO_MESSAGE =
+      "Hello and Thank you for choosing Protective Life. During this phone call I will ask several questions regarding your health, medications, some financials, even past or future travel. What this information will do is help us understand your health and financial situation as it relates to life insurance.";
 
     const COMPLETION_MESSAGE = 
-      "Thank you for your answers. " +
+      "Thank you choosing Protective Life. " +
       "Your responses have been recorded. " +
       "A representative will review your information and contact you within 24 to 48 hours.";
 
@@ -611,6 +627,7 @@
           retryCount: 0,
           explainCounts: {},
           lastWhyExplanation: null,
+          pendingAssistantMessage: null,
           error: null,
         };
         
@@ -653,8 +670,7 @@
         const sessionId = this.sessionId;
         if (questionIndex < 0 || questionIndex >= QUESTIONS.length) {
           this.setState({ status: 'speaking', currentQuestionIndex: -1 });
-          this.state.transcript.push({ role: 'assistant', text: COMPLETION_MESSAGE });
-          await this.tts.speak(COMPLETION_MESSAGE);
+          await this.speakAssistant(COMPLETION_MESSAGE, sessionId);
           if (this.sessionId !== sessionId) return;
           this.setState({ status: 'complete' });
           return;
@@ -669,8 +685,7 @@
           lastWhyExplanation: shouldResetWhy ? null : this.state.lastWhyExplanation,
         });
 
-        this.state.transcript.push({ role: 'assistant', text: question.question });
-        await this.tts.speak(question.question);
+        await this.speakAssistant(question.question, sessionId);
         if (this.sessionId !== sessionId) return;
 
         this.setState({ status: 'listening' });
@@ -682,11 +697,11 @@
           if (!spokenAnswer) {
             if (this.state.retryCount < MAX_RETRIES) {
               this.setState({ retryCount: this.state.retryCount + 1 });
-              await this.tts.speak("I didn't hear anything. Let me repeat the question.");
+              await this.speakAssistant("I didn't hear anything. Let me repeat the question.", sessionId);
               if (this.sessionId !== sessionId) return;
               return this.askQuestion(questionIndex);
             } else {
-              await this.tts.speak("I'm having trouble hearing you. Let's move on.");
+              await this.speakAssistant("I'm having trouble hearing you. Let's move on.", sessionId);
               if (this.sessionId !== sessionId) return;
               this.state.answers[question.id] = 'NO_RESPONSE';
               return this.advanceToNextQuestion(questionIndex, 'NO_RESPONSE');
@@ -697,9 +712,8 @@
           
           if (this.isRepeatRequest(spokenAnswer)) {
             const acknowledgement = "Sure, I'll repeat the question.";
-            this.state.transcript.push({ role: 'assistant', text: acknowledgement });
             this.setState({ status: 'speaking' });
-            await this.tts.speak(acknowledgement);
+            await this.speakAssistant(acknowledgement, sessionId);
             if (this.sessionId !== sessionId) return;
             return this.askQuestion(questionIndex, { preserveRetryCount: true });
           }
@@ -710,10 +724,18 @@
 
           return this.handleValidation(questionIndex, question, spokenAnswer, sessionId);
 
-        } catch (error) {
-          console.error('ASR Error:', error);
-          this.setState({ error: error.message, status: 'idle' });
-        }
+      } catch (error) {
+        console.error('ASR Error:', error);
+        this.setState({ error: error.message, status: 'idle' });
+      }
+    }
+
+      async speakAssistant(text, sessionId) {
+        this.setState({ pendingAssistantMessage: text });
+        await this.tts.speak(text);
+        if (this.sessionId !== sessionId) return;
+        const updatedTranscript = this.state.transcript.concat({ role: 'assistant', text });
+        this.setState({ transcript: updatedTranscript, pendingAssistantMessage: null });
       }
 
       isRepeatRequest(transcript) {
@@ -861,9 +883,8 @@
         const prompt = "Let me know if you want me to repeat it, or go ahead and answer.";
         const combined = `${explanation} ${bridge} ${prompt}`;
 
-        this.state.transcript.push({ role: 'assistant', text: combined });
         this.setState({ status: 'speaking' });
-        await this.tts.speak(combined);
+        await this.speakAssistant(combined, sessionId);
         if (this.sessionId !== sessionId) return;
 
         this.setState({ status: 'listening' });
@@ -889,9 +910,8 @@
 
       async handleHandoff(questionIndex, question, sessionId) {
         const handoffMessage = "I want to make sure we get this right. I can connect you to an agent, or we can move forward here. What do you prefer?";
-        this.state.transcript.push({ role: 'assistant', text: handoffMessage });
         this.setState({ status: 'speaking' });
-        await this.tts.speak(handoffMessage);
+        await this.speakAssistant(handoffMessage, sessionId);
         if (this.sessionId !== sessionId) return;
 
         this.setState({ status: 'listening' });
@@ -932,9 +952,8 @@
 
         if (validation.repeat) {
           const acknowledgement = "Sure, I'll repeat the question.";
-          this.state.transcript.push({ role: 'assistant', text: acknowledgement });
           this.setState({ status: 'speaking' });
-          await this.tts.speak(acknowledgement);
+          await this.speakAssistant(acknowledgement, sessionId);
           if (this.sessionId !== sessionId) return;
           return this.askQuestion(questionIndex, { preserveRetryCount: true });
         }
@@ -948,25 +967,30 @@
             const escalation = retryNum === 2 ? " Let's try once more." : "";
             const clarification = explanation + escalation;
 
-            this.state.transcript.push({ role: 'assistant', text: clarification });
-            await this.tts.speak(clarification);
+            await this.speakAssistant(clarification, sessionId);
             if (this.sessionId !== sessionId) return;
             return this.askQuestion(questionIndex);
           }
 
-          await this.tts.speak("Let's move on to the next question.");
+          await this.speakAssistant("Let's move on to the next question.", sessionId);
           if (this.sessionId !== sessionId) return;
           this.state.answers[question.id] = spokenAnswer;
           return this.advanceToNextQuestion(questionIndex, spokenAnswer);
         }
 
         const normalizedAnswer = validation.normalized;
-        const cleanedAnswer = question.type === 'open'
+        let cleanedAnswer = question.type === 'open'
           ? this.stripAcknowledgementPrefix(normalizedAnswer)
           : normalizedAnswer;
+        if (question.id === 'cust_id_gender' && cleanedAnswer) {
+          const lowered = cleanedAnswer.toLowerCase().trim();
+          if (lowered === 'mail') {
+            cleanedAnswer = 'male';
+          }
+        }
         this.state.answers[question.id] = cleanedAnswer;
 
-        await this.tts.speak("Thank you.");
+        await this.speakAssistant("Thank you.", sessionId);
         if (this.sessionId !== sessionId) return;
 
         this.advanceToNextQuestion(questionIndex, cleanedAnswer);
@@ -1012,11 +1036,11 @@
           retryCount: 0,
           explainCounts: {},
           lastWhyExplanation: null,
+          pendingAssistantMessage: null,
           error: null,
         });
 
-        this.state.transcript.push({ role: 'assistant', text: INTRO_MESSAGE });
-        await this.tts.speak(INTRO_MESSAGE);
+        await this.speakAssistant(INTRO_MESSAGE, sessionId);
         if (this.sessionId !== sessionId) return;
 
         const firstIndex = this.findNextQuestionIndex(0, {});
@@ -1027,7 +1051,7 @@
         this.sessionId += 1;
         this.tts.stop();
         this.asr.stop();
-        this.setState({ status: 'idle' });
+        this.setState({ status: 'idle', pendingAssistantMessage: null });
       }
     }
 
@@ -1345,7 +1369,7 @@
       }).join('');
 
       const showUserTyping = state.status === 'listening' && state.transcript.length > 0;
-      const showSystemTyping = ['speaking', 'validating'].includes(state.status) && state.transcript.length > 0;
+      const showSystemTyping = state.status === 'validating' && state.transcript.length > 0;
 
       const typingDots = (alignRight) => `
         <div class="flex ${alignRight ? 'justify-end' : 'justify-start'}">
@@ -1372,7 +1396,8 @@
             <div id="chatScroll" class="flex-1 overflow-y-auto space-y-3 py-4 pr-1">
               ${bubbleHtml || '<div class="text-[var(--brand-text-secondary)] text-sm">Conversation will appear here.</div>'}
               ${showUserTyping ? typingDots(true) : ''}
-              ${showSystemTyping ? typingDots(false) : ''}
+              ${state.pendingAssistantMessage ? typingDots(false) : ''}
+              ${showSystemTyping && !state.pendingAssistantMessage ? typingDots(false) : ''}
             </div>
             <div class="pt-3 border-t border-gray-200">
               <div class="bg-[var(--brand-background)] rounded-xl px-4 py-3 text-[var(--brand-text-secondary)] text-xs">
