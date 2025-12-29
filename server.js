@@ -99,7 +99,8 @@ RULES:
 - Response should be relevant to the question asked
 - Accept any reasonable answer that attempts to address the question
 - Only mark as INVALID if completely nonsensical or clearly unrelated (e.g., "Volvo" for "what medications do you take")
-- Normalize by cleaning up the text (trim whitespace, fix obvious transcription issues)`;
+- Normalize by cleaning up the text (trim whitespace, fix obvious transcription issues)
+- If the response includes acknowledgements (e.g., "ok", "I get it"), omit them and return only the answer`;
   }
 
   return `You are an answer validator for a medical insurance questionnaire. Your ONLY job is to determine if a spoken response is a valid answer to the question, and normalize it.
@@ -126,6 +127,32 @@ Remember:
 - Be lenient for open questions - accept anything relevant  
 - The "normalized" value should be clean and standardized
 - For yes_no, normalized MUST be exactly "YES" or "NO"`;
+}
+
+// ============================================================================
+// WHY EXPLANATION PROMPT BUILDER
+// ============================================================================
+
+function buildWhyPrompt(question, section, explainLevel = 1, previousExplanation = null) {
+  const followUpNote = explainLevel > 1
+    ? 'This is a follow-up request. Add a bit more detail than before and avoid repeating prior phrasing.'
+    : 'This is the first explanation.';
+  const previousText = previousExplanation
+    ? `PREVIOUS EXPLANATION: "${previousExplanation}"`
+    : 'PREVIOUS EXPLANATION: none';
+
+  return `You are a helpful assistant for an insurance questionnaire. The user asked why they need to answer a question.
+
+SECTION: "${section}"
+QUESTION: "${question}"
+${previousText}
+EXPLANATION LEVEL: ${explainLevel}
+${followUpNote}
+
+Provide a concise, user-directed explanation of why this question is relevant (1-2 sentences). Keep it conversational and neutral. Do not re-ask the question. Do not mention internal policies or underwriting guidelines.
+
+RESPOND WITH ONLY THIS JSON (no markdown, no explanation):
+{"explanation": "YOUR_EXPLANATION"}`;
 }
 
 // ============================================================================
@@ -242,6 +269,37 @@ app.post('/api/validate', async (req, res) => {
 });
 
 /**
+ * POST /api/why
+ * Returns a brief explanation of why a question is being asked
+ */
+app.post('/api/why', async (req, res) => {
+  const { question, section, explainLevel, previousExplanation } = req.body;
+
+  if (!question || !section) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  const prompt = buildWhyPrompt(question, section, explainLevel, previousExplanation);
+
+  try {
+    let result;
+
+    if (config.validationProvider === 'openai' && config.openai.apiKey) {
+      result = await explainWithOpenAI(prompt);
+    } else if (config.anthropic.apiKey) {
+      result = await explainWithAnthropic(prompt);
+    } else {
+      result = { explanation: 'This helps us understand your medical history for your application.' };
+    }
+
+    res.json(result);
+  } catch (error) {
+    console.error('Why explanation error:', error);
+    res.json({ explanation: 'This helps us understand your medical history for your application.' });
+  }
+});
+
+/**
  * Validate using Anthropic Claude
  */
 async function validateWithAnthropic(prompt) {
@@ -267,6 +325,34 @@ async function validateWithAnthropic(prompt) {
   const content = data.content[0].text.trim();
   
   return parseValidationResponse(content);
+}
+
+/**
+ * Explain using Anthropic Claude
+ */
+async function explainWithAnthropic(prompt) {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': config.anthropic.apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: config.anthropic.model,
+      max_tokens: 120,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Anthropic API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const content = data.content[0].text.trim();
+
+  return parseWhyResponse(content);
 }
 
 /**
@@ -297,6 +383,33 @@ async function validateWithOpenAI(prompt) {
 }
 
 /**
+ * Explain using OpenAI
+ */
+async function explainWithOpenAI(prompt) {
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.openai.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: config.openai.model,
+      max_tokens: 120,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`OpenAI API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices[0].message.content.trim();
+
+  return parseWhyResponse(content);
+}
+
+/**
  * Parse LLM response to extract validation result
  */
 function parseValidationResponse(content) {
@@ -317,8 +430,48 @@ function parseValidationResponse(content) {
 }
 
 /**
+ * Parse LLM response to extract why explanation
+ */
+function parseWhyResponse(content) {
+  try {
+    const jsonStr = content.replace(/```json\n?|\n?```/g, '').trim();
+    const result = JSON.parse(jsonStr);
+    return {
+      explanation: result.explanation || 'This helps us understand your medical history for your application.',
+    };
+  } catch (error) {
+    console.error('Failed to parse why response:', content);
+    return { explanation: 'This helps us understand your medical history for your application.' };
+  }
+}
+
+/**
  * Fallback rule-based validation (when no API keys configured)
  */
+function stripAcknowledgementPrefix(text) {
+  const trimmed = text.trim();
+  const patterns = [
+    /^ok\b[\s,.-]*/i,
+    /^okay\b[\s,.-]*/i,
+    /^alright\b[\s,.-]*/i,
+    /^all right\b[\s,.-]*/i,
+    /^sure\b[\s,.-]*/i,
+    /^got it\b[\s,.-]*/i,
+    /^i get it\b[\s,.-]*/i,
+    /^i understand\b[\s,.-]*/i,
+    /^that makes sense\b[\s,.-]*/i,
+  ];
+
+  for (const pattern of patterns) {
+    if (pattern.test(trimmed)) {
+      const updated = trimmed.replace(pattern, '').trim();
+      return updated.length > 0 ? updated : trimmed;
+    }
+  }
+
+  return trimmed;
+}
+
 function isRepeatRequest(transcript) {
   const normalized = transcript.toLowerCase().trim();
   const patterns = [
@@ -368,7 +521,8 @@ function fallbackValidation(questionType, transcript, choices) {
   
   // For open/date/number, accept any non-empty response
   if (transcript.trim().length > 0) {
-    return { valid: true, normalized: transcript.trim(), explanation: null };
+    const cleaned = questionType === 'open' ? stripAcknowledgementPrefix(transcript) : transcript.trim();
+    return { valid: true, normalized: cleaned, explanation: null };
   }
   
   let explanation = 'Please provide a valid response.';

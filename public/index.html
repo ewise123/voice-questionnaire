@@ -380,6 +380,7 @@
       "A representative will review your information and contact you within 24 to 48 hours.";
 
     const MAX_RETRIES = 3;
+    const MAX_EXPLAINS = 2;
 
     // ============================================================================
     // TEXT-TO-SPEECH SERVICE
@@ -570,6 +571,26 @@
       }
     }
 
+    class WhyService {
+      async explain(question, section, explainLevel = 1, previousExplanation = null) {
+        try {
+          const response = await fetch('/api/why', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question, section, explainLevel, previousExplanation }),
+          });
+
+          if (!response.ok) {
+            throw new Error('Why API error');
+          }
+
+          return await response.json();
+        } catch (error) {
+          console.error('Why explanation error:', error);
+          return { explanation: 'This helps us understand your medical history for your application.' };
+        }
+      }
+    }
     // ============================================================================
     // FLOW CONTROLLER
     // ============================================================================
@@ -579,6 +600,7 @@
         this.tts = new TTSService();
         this.asr = new ASRService();
         this.validator = new ValidationService();
+        this.why = new WhyService();
         this.sessionId = 0;
         
         this.state = {
@@ -587,6 +609,8 @@
           answers: {},
           transcript: [],
           retryCount: 0,
+          explainCounts: {},
+          lastWhyExplanation: null,
           error: null,
         };
         
@@ -636,11 +660,13 @@
           return;
         }
 
+        const shouldResetWhy = questionIndex !== this.state.currentQuestionIndex;
         const question = QUESTIONS[questionIndex];
         this.setState({ 
           status: 'speaking', 
           currentQuestionIndex: questionIndex,
-          retryCount: preserveRetryCount ? this.state.retryCount : 0 
+          retryCount: preserveRetryCount ? this.state.retryCount : 0,
+          lastWhyExplanation: shouldResetWhy ? null : this.state.lastWhyExplanation,
         });
 
         this.state.transcript.push({ role: 'assistant', text: question.question });
@@ -678,52 +704,11 @@
             return this.askQuestion(questionIndex, { preserveRetryCount: true });
           }
 
-          this.setState({ status: 'validating' });
-          const validation = await this.validator.validate(
-            question.question,
-            question.type,
-            spokenAnswer,
-            question.choices
-          );
-          if (this.sessionId !== sessionId) return;
-
-          if (validation.repeat) {
-            const acknowledgement = "Sure, I'll repeat the question.";
-            this.state.transcript.push({ role: 'assistant', text: acknowledgement });
-            this.setState({ status: 'speaking' });
-            await this.tts.speak(acknowledgement);
-            if (this.sessionId !== sessionId) return;
-            return this.askQuestion(questionIndex, { preserveRetryCount: true });
+          if (this.isWhyRequest(spokenAnswer)) {
+            return this.handleWhy(questionIndex, question, sessionId);
           }
 
-          if (!validation.valid) {
-            if (this.state.retryCount < MAX_RETRIES) {
-              const retryNum = this.state.retryCount + 1;
-              this.setState({ retryCount: retryNum });
-
-              const explanation = validation.explanation || this.getGenericExplanation(question.type);
-              const escalation = retryNum === 2 ? " Let's try once more." : "";
-              const clarification = explanation + escalation;
-
-              this.state.transcript.push({ role: 'assistant', text: clarification });
-              await this.tts.speak(clarification);
-              if (this.sessionId !== sessionId) return;
-              return this.askQuestion(questionIndex);
-            } else {
-              await this.tts.speak("Let's move on to the next question.");
-              if (this.sessionId !== sessionId) return;
-              this.state.answers[question.id] = spokenAnswer;
-              return this.advanceToNextQuestion(questionIndex, spokenAnswer);
-            }
-          }
-
-          const normalizedAnswer = validation.normalized;
-          this.state.answers[question.id] = normalizedAnswer;
-          
-          await this.tts.speak("Thank you.");
-          if (this.sessionId !== sessionId) return;
-          
-          this.advanceToNextQuestion(questionIndex, normalizedAnswer);
+          return this.handleValidation(questionIndex, question, spokenAnswer, sessionId);
 
         } catch (error) {
           console.error('ASR Error:', error);
@@ -750,9 +735,241 @@
           'sorry',
           'what did you say',
           'what was the question',
-          'what'
+          'what',
+          'can you repeat that',
+          'say that',
+          'say it',
         ];
         return patterns.some((p) => normalized.includes(p));
+      }
+
+      stripAcknowledgementPrefix(text) {
+        if (!text) return text;
+        const trimmed = text.trim();
+        const patterns = [
+          /^ok\b[\s,.-]*/i,
+          /^okay\b[\s,.-]*/i,
+          /^alright\b[\s,.-]*/i,
+          /^all right\b[\s,.-]*/i,
+          /^sure\b[\s,.-]*/i,
+          /^got it\b[\s,.-]*/i,
+          /^i get it\b[\s,.-]*/i,
+          /^i understand\b[\s,.-]*/i,
+          /^that makes sense\b[\s,.-]*/i,
+        ];
+
+        for (const pattern of patterns) {
+          if (pattern.test(trimmed)) {
+            const updated = trimmed.replace(pattern, '').trim();
+            return updated.length > 0 ? updated : trimmed;
+          }
+        }
+
+        return trimmed;
+      }
+
+      isWhyRequest(transcript) {
+        const normalized = transcript.toLowerCase().trim();
+        const patterns = [
+          'why do i need to answer',
+          'why do i need to answer that',
+          'why do i have to answer',
+          'why do i have to answer that',
+          'why are you asking',
+          'why do you need this',
+          'why do you need to know',
+          'why is this needed',
+          'why is that needed',
+          'what is this for',
+          'why is this question',
+          'why do i need to',
+          'why do you ask',
+          'why are you asking me',
+          'why are you asking that',
+          'why are you asking this',
+          'can you explain',
+          'could you explain',
+          'explain that',
+          'explain this',
+          'can you explain that',
+          'can you explain this',
+          'help me understand',
+          'why',
+          'explain',
+        ];
+        return patterns.some((p) => normalized.includes(p));
+      }
+
+      isAgentRequest(transcript) {
+        const normalized = transcript.toLowerCase().trim();
+        const patterns = [
+          'agent',
+          'representative',
+          'talk to a person',
+          'talk to someone',
+          'speak to someone',
+          'human',
+          'connect me',
+        ];
+        return patterns.some((p) => normalized.includes(p));
+      }
+
+      isContinueRequest(transcript) {
+        const normalized = transcript.toLowerCase().trim();
+        const patterns = [
+          'continue',
+          'keep going',
+          'go on',
+          'let\'s continue',
+          'ready',
+        ];
+        return patterns.some((p) => normalized.includes(p));
+      }
+
+      getBridgeText(index) {
+        const options = [
+          "That's why we ask.",
+          "I appreciate you asking.",
+          "Thanks for checking on that.",
+          "That context helps.",
+        ];
+        return options[index % options.length];
+      }
+
+      async handleWhy(questionIndex, question, sessionId) {
+        const currentCount = this.state.explainCounts[question.id] || 0;
+        const nextCount = currentCount + 1;
+        const explainCounts = { ...this.state.explainCounts, [question.id]: nextCount };
+        this.setState({ explainCounts });
+
+        if (nextCount > MAX_EXPLAINS) {
+          return this.handleHandoff(questionIndex, question, sessionId);
+        }
+
+        this.setState({ status: 'validating' });
+        const whyResponse = await this.why.explain(
+          question.question,
+          question.section,
+          nextCount,
+          this.state.lastWhyExplanation || null
+        );
+        if (this.sessionId !== sessionId) return;
+
+        const explanation = whyResponse.explanation || 'This helps us understand your medical history for your application.';
+        this.setState({ lastWhyExplanation: explanation });
+        const bridge = this.getBridgeText(nextCount - 1);
+        const prompt = "Let me know if you want me to repeat it, or go ahead and answer.";
+        const combined = `${explanation} ${bridge} ${prompt}`;
+
+        this.state.transcript.push({ role: 'assistant', text: combined });
+        this.setState({ status: 'speaking' });
+        await this.tts.speak(combined);
+        if (this.sessionId !== sessionId) return;
+
+        this.setState({ status: 'listening' });
+        const response = await this.asr.listen(15000);
+        if (this.sessionId !== sessionId) return;
+
+        if (!response) {
+          return this.askQuestion(questionIndex, { preserveRetryCount: true });
+        }
+
+        this.state.transcript.push({ role: 'user', text: response });
+
+        if (this.isRepeatRequest(response)) {
+          return this.askQuestion(questionIndex, { preserveRetryCount: true });
+        }
+
+        if (this.isWhyRequest(response)) {
+          return this.handleWhy(questionIndex, question, sessionId);
+        }
+
+        return this.handleValidation(questionIndex, question, response, sessionId);
+      }
+
+      async handleHandoff(questionIndex, question, sessionId) {
+        const handoffMessage = "I want to make sure we get this right. I can connect you to an agent, or we can move forward here. What do you prefer?";
+        this.state.transcript.push({ role: 'assistant', text: handoffMessage });
+        this.setState({ status: 'speaking' });
+        await this.tts.speak(handoffMessage);
+        if (this.sessionId !== sessionId) return;
+
+        this.setState({ status: 'listening' });
+        const response = await this.asr.listen(15000);
+        if (this.sessionId !== sessionId) return;
+
+        if (!response) {
+          return this.askQuestion(questionIndex, { preserveRetryCount: true });
+        }
+
+        this.state.transcript.push({ role: 'user', text: response });
+
+        if (this.isAgentRequest(response)) {
+          this.setState({ status: 'handoff' });
+          return;
+        }
+
+        if (this.isContinueRequest(response) || this.isRepeatRequest(response)) {
+          return this.askQuestion(questionIndex, { preserveRetryCount: true });
+        }
+
+        if (this.isWhyRequest(response)) {
+          return this.handleHandoff(questionIndex, question, sessionId);
+        }
+
+        return this.handleValidation(questionIndex, question, response, sessionId);
+      }
+
+      async handleValidation(questionIndex, question, spokenAnswer, sessionId) {
+        this.setState({ status: 'validating' });
+        const validation = await this.validator.validate(
+          question.question,
+          question.type,
+          spokenAnswer,
+          question.choices
+        );
+        if (this.sessionId !== sessionId) return;
+
+        if (validation.repeat) {
+          const acknowledgement = "Sure, I'll repeat the question.";
+          this.state.transcript.push({ role: 'assistant', text: acknowledgement });
+          this.setState({ status: 'speaking' });
+          await this.tts.speak(acknowledgement);
+          if (this.sessionId !== sessionId) return;
+          return this.askQuestion(questionIndex, { preserveRetryCount: true });
+        }
+
+        if (!validation.valid) {
+          if (this.state.retryCount < MAX_RETRIES) {
+            const retryNum = this.state.retryCount + 1;
+            this.setState({ retryCount: retryNum });
+
+            const explanation = validation.explanation || this.getGenericExplanation(question.type);
+            const escalation = retryNum === 2 ? " Let's try once more." : "";
+            const clarification = explanation + escalation;
+
+            this.state.transcript.push({ role: 'assistant', text: clarification });
+            await this.tts.speak(clarification);
+            if (this.sessionId !== sessionId) return;
+            return this.askQuestion(questionIndex);
+          }
+
+          await this.tts.speak("Let's move on to the next question.");
+          if (this.sessionId !== sessionId) return;
+          this.state.answers[question.id] = spokenAnswer;
+          return this.advanceToNextQuestion(questionIndex, spokenAnswer);
+        }
+
+        const normalizedAnswer = validation.normalized;
+        const cleanedAnswer = question.type === 'open'
+          ? this.stripAcknowledgementPrefix(normalizedAnswer)
+          : normalizedAnswer;
+        this.state.answers[question.id] = cleanedAnswer;
+
+        await this.tts.speak("Thank you.");
+        if (this.sessionId !== sessionId) return;
+
+        this.advanceToNextQuestion(questionIndex, cleanedAnswer);
       }
 
       getGenericExplanation(questionType) {
@@ -793,6 +1010,8 @@
           answers: {},
           transcript: [],
           retryCount: 0,
+          explainCounts: {},
+          lastWhyExplanation: null,
           error: null,
         });
 
@@ -878,9 +1097,10 @@
             <div class="flex-1">
               ${state.status === 'idle' ? renderIdle(state) : ''}
               ${['speaking', 'listening', 'validating'].includes(state.status) ? renderActive(state, question) : ''}
+              ${state.status === 'handoff' ? renderHandoff() : ''}
               ${state.status === 'complete' ? renderComplete(state) : ''}
             </div>
-            ${['idle', 'complete'].includes(state.status) ? '' : renderChatFeed(state)}
+            ${['idle', 'complete', 'handoff'].includes(state.status) ? '' : renderChatFeed(state)}
           </div>
         </main>
       `;
@@ -1056,6 +1276,28 @@
                   class="mt-10 px-8 py-3 bg-[var(--brand-primary)] hover:bg-[var(--brand-secondary)] 
                          text-white rounded-full font-semibold transition-all shadow-xl">
             Start New Application
+          </button>
+        </div>
+      `;
+    }
+
+    function renderHandoff() {
+      return `
+        <div class="text-center">
+          <div class="w-32 h-32 mx-auto bg-[var(--brand-primary)] rounded-full 
+                      flex items-center justify-center mb-8 shadow-xl">
+            <svg class="w-16 h-16 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h2 class="text-3xl font-bold mb-4">Agent Handoff Requested</h2>
+          <p class="text-[var(--brand-text-secondary)] mb-10 max-w-lg mx-auto">
+            We can connect you with an agent to finish this question.
+          </p>
+          <button id="restartBtn" 
+                  class="mt-4 px-8 py-3 bg-[var(--brand-primary)] hover:bg-[var(--brand-secondary)] 
+                         text-white rounded-full font-semibold transition-all shadow-xl">
+            Start Over
           </button>
         </div>
       `;
