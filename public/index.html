@@ -690,7 +690,7 @@
 
         // Announce the Lifestyle and Medical Related questions
         const Lifestyle_and_Medical_Message = "Next we will be going through some Lifestyle and medical related questions. Please keep in mind that the answers are assumed to be to the best of your knowledge. In order to expedite the overall application process we do like to obtain as much information as possible up front to eliminate any delays.";
-        if (questionIndex === 4) {
+        if (questionIndex === 3) {
           this.state.transcript.push({ role: 'assistant', text: Lifestyle_and_Medical_Message });
           await this.tts.speak(Lifestyle_and_Medical_Message);
         }
