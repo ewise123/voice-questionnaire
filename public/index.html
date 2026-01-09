@@ -225,6 +225,7 @@
       }
     ];
     const DEFAULT_LANGUAGE = 'en';
+    const SHOW_LANGUAGE_SELECTOR = false;
     const LANGUAGE_OPTIONS = {
       en: { label: 'English', asrLang: 'en-US', ttsLang: 'en-US', htmlLang: 'en' },
       es: { label: 'Español', asrLang: 'es-ES', ttsLang: 'es-ES', htmlLang: 'es' },
@@ -1604,6 +1605,7 @@
     const controller = new FlowController();
 
     function renderLanguageSelect(state, strings) {
+      if (!SHOW_LANGUAGE_SELECTOR) return '';
       const normalized = normalizeLanguage(state.language);
       const isDisabled = state.status !== 'idle';
       const disabledClass = isDisabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer';
