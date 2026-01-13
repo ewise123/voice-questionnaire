@@ -40,7 +40,6 @@ const config = {
   },
   validationProvider: process.env.VALIDATION_PROVIDER || 'anthropic',
 };
-const mockExternalApis = process.env.MOCK_EXTERNAL_APIS === 'true';
 
 // ============================================================================
 // VALIDATION PROMPT BUILDER
@@ -258,8 +257,8 @@ or
  */
 app.get('/api/config', (req, res) => {
   res.json({
-    ttsEnabled: !mockExternalApis && !!config.elevenlabs.apiKey,
-    validationEnabled: !mockExternalApis && !!(config.anthropic.apiKey || config.openai.apiKey),
+    ttsEnabled: !!config.elevenlabs.apiKey,
+    validationEnabled: !!(config.anthropic.apiKey || config.openai.apiKey),
     validationProvider: config.validationProvider,
   });
 });
@@ -273,10 +272,6 @@ app.post('/api/tts', async (req, res) => {
 
   if (!text) {
     return res.status(400).json({ error: 'Text is required' });
-  }
-
-  if (mockExternalApis) {
-    return res.status(204).end();
   }
 
   if (!config.elevenlabs.apiKey) {
@@ -352,9 +347,7 @@ app.post('/api/validate', async (req, res) => {
   try {
     let result;
 
-    if (mockExternalApis) {
-      result = fallbackValidation(questionType, transcript, choices);
-    } else if (config.validationProvider === 'openai' && config.openai.apiKey) {
+    if (config.validationProvider === 'openai' && config.openai.apiKey) {
       result = await validateWithOpenAI(prompt);
     } else if (config.anthropic.apiKey) {
       result = await validateWithAnthropic(prompt);
@@ -381,10 +374,6 @@ app.post('/api/why', async (req, res) => {
 
   if (!question || !section) {
     return res.status(400).json({ error: 'Missing required fields' });
-  }
-
-  if (mockExternalApis) {
-    return res.json({ explanation: 'This helps us understand your medical history for your application.' });
   }
 
   const prompt = buildWhyPrompt(question, section, explainLevel, previousExplanation);
@@ -416,10 +405,6 @@ app.post('/api/followup', async (req, res) => {
 
   if (!section || !questionText || lastAnswer === undefined) {
     return res.status(400).json({ error: 'Missing required fields' });
-  }
-
-  if (mockExternalApis) {
-    return res.json({ done: true });
   }
 
   if (!config.anthropic.apiKey && !config.openai.apiKey) {
@@ -468,10 +453,6 @@ app.post('/api/followup-check', async (req, res) => {
 
   if (!candidateQuestion) {
     return res.status(400).json({ error: 'Missing required fields' });
-  }
-
-  if (mockExternalApis) {
-    return res.json({ allow: true });
   }
 
   if (!config.anthropic.apiKey && !config.openai.apiKey) {
