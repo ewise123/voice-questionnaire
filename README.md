@@ -30,6 +30,9 @@ ANTHROPIC_API_KEY=your_key_here
 # OR OpenAI (alternative)
 OPENAI_API_KEY=your_key_here
 VALIDATION_PROVIDER=anthropic   # or 'openai'
+
+# Optional: disable external API calls (useful for load testing)
+MOCK_EXTERNAL_APIS=false
 ```
 
 ### 3. Run the Server
