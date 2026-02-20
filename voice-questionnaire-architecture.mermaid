@@ -1,0 +1,22 @@
+flowchart LR
+    User(["Protective Stakeholder<br/>(Chrome / Edge)"])
+
+    Frontend["Vanilla JS SPA<br/>public/index.html<br/>Tailwind CSS via CDN<br/>Web Speech API for ASR<br/>Web Speech Synthesis fallback<br/>Web Audio API for playback"]
+
+    StateMachine["FlowController<br/>Deterministic State Machine<br/>Question flow + skip logic"]
+
+    Backend["Express 4.18 Backend<br/>Node.js 18 · Docker<br/><br/>GET /api/config<br/>POST /api/tts<br/>POST /api/validate<br/>POST /api/why<br/>POST /api/followup<br/>POST /api/followup-check<br/><br/>Fallback: rule-based validation"]
+
+    ElevenLabs[("ElevenLabs<br/>eleven_turbo_v2_5")]
+    Anthropic[("Anthropic Claude<br/>claude-sonnet-4-20250514")]
+    OpenAI[("OpenAI<br/>gpt-4o-mini<br/>alternative provider")]
+
+    User -- "Voice input via mic" --> Frontend
+    Frontend <-- "Question flow + UI updates" --> StateMachine
+    Frontend -- "REST API, HTTP JSON" --> Backend
+    Backend -- "Audio + JSON responses" --> Frontend
+    Frontend -- "Audio output via speaker" --> User
+    Backend -- "REST, xi-api-key header" --> ElevenLabs
+    ElevenLabs -- "audio/mpeg stream" --> Backend
+    Backend -- "REST, x-api-key header" --> Anthropic
+    Backend -. "REST, Bearer token<br/>if VALIDATION_PROVIDER=openai" .-> OpenAI
